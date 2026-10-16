@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 
+import { meteredCodexModelRecord, withDeepSeekOfficialModels } from "../src/catalog/models.ts";
 import { toDeepSeekChatMessages, toDeepSeekResponsesChatBody } from "../src/deepseek/chat-projection.ts";
 import { LITHOS_RESPONSES_PROFILE } from "../src/deepseek/responses.ts";
 
@@ -868,3 +869,35 @@ test("deepseek wire: provider request ids and dispatch failures keep their ident
   });
   assert.equal(healthy.status, 200);
 });
+
+test("deepseek catalog: official DeepSeek tiers and default win when paid discovery already published deepseek-v4-pro", () => {
+  const previousKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "sk-deepseek-fixture";
+  try {
+    const paidProRow = meteredCodexModelRecord({
+      id: "deepseek-v4-pro",
+      owned_by: "surplus",
+      supported_endpoint_types: ["openai-response"],
+    });
+    assert.deepEqual(
+      (paidProRow.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["none"],
+      "the bare paid discovery record defaults to none alone"
+    );
+    assert.equal(paidProRow.default_reasoning_level, "none");
+
+    const models = withDeepSeekOfficialModels([paidProRow]);
+    const proRows = models.filter((model) => model.slug === "deepseek-v4-pro");
+    assert.equal(proRows.length, 1, "deepseek-v4-pro is listed once");
+    assert.deepEqual(
+      (proRows[0].supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["none", "low", "high", "max"],
+      "the official DeepSeek reasoning tiers win over the paid discovery row"
+    );
+    assert.equal(proRows[0].default_reasoning_level, "high");
+  } finally {
+    if (previousKey === undefined) Reflect.deleteProperty(process.env, "DEEPSEEK_API_KEY");
+    else process.env.DEEPSEEK_API_KEY = previousKey;
+  }
+});
+

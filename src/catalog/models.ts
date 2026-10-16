@@ -287,15 +287,25 @@ const deepSeekOfficialCodexModels = (): Record<string, unknown>[] => {
 };
 
 /**
- * Appends the official ids that the stored catalog does not already advertise.
- * A discovery source may already publish the legacy alias with equivalent
- * tiers, and replacing it would churn that record for no behavioral gain.
+ * Replaces any existing record for the official DeepSeek ids with the official
+ * route declaration and appends the rest. When paid discovery has already
+ * published `deepseek-v4-pro` (or another official DeepSeek id), the official
+ * `none/low/high/max` tiers and `high` default must win for an id that routes
+ * to DeepSeek.
  */
 const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
   const configured = deepSeekOfficialCodexModels();
   if (!configured.length) return [...models];
-  const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
-  return [...models, ...configured.filter((model) => !present.has(String(model.slug)))];
+  const bySlug = new Map(configured.map((model) => [String(model.slug), model]));
+  const replaced = new Set<string>();
+  const merged = models.map((model) => {
+    const slug = (getString(model.slug) ?? getString(model.id) ?? "").trim();
+    const official = bySlug.get(slug);
+    if (!official) return model;
+    replaced.add(slug);
+    return official;
+  });
+  return [...merged, ...configured.filter((model) => !replaced.has(String(model.slug)))];
 };
 
 /**
