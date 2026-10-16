@@ -827,7 +827,7 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
       });
     },
     refreshSurplus: (options) => {
-      calls.push(`surplus:${options?.force === true ? "force" : "plain"}`);
+      calls.push(`surplus:${options?.force === true ? "force" : "plain"}:${options?.requireApiKey === false ? "keyless" : "keyed"}`);
       return Promise.resolve({
         models: [
           { id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "OpenAI", supported_endpoint_types: ["openai-response"] },
@@ -842,8 +842,8 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
   const body = await response.json();
   assert.deepEqual(
     [...calls].sort((left, right) => left.localeCompare(right)),
-    ["claude:force", "openlux:force", "openrouter", "surplus:force"],
-    "every upstream is force-refreshed"
+    ["claude:force", "openlux:force", "openrouter", "surplus:force:keyless"],
+    "every upstream is force-refreshed and Surplus runs with requireApiKey: false"
   );
   assert.deepEqual(body.data, {
     openrouter: { upstream_models: 2, updated_at_ms: 1_789_000_000_000, refreshed: true },
@@ -851,6 +851,40 @@ test("admin metadata refresh forces every upstream and reports what is cached", 
     surplus: { models: 2, updated_at_ms: 2 },
     claude_code: { models: 1, updated_at_ms: 3, status: "available", stale: false },
   });
+});
+
+test("admin metadata refresh fetches the public Surplus catalog with no API key present", async () => {
+  delete process.env.SURPLUS_API_KEY;
+  resetSurplusModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  const fetchedUrls: string[] = [];
+  globalThis.fetch = createFetchMock((input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    fetchedUrls.push(url);
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "gpt-5.6-sol", object: "model", created: 0, owned_by: "OpenAI", supported_endpoint_types: ["openai-response"] }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
+    );
+  });
+  try {
+    const response = await handleAdminModelsRefresh({
+      refreshClaude: () => Promise.resolve(null),
+      refreshEnrichment: () => Promise.resolve(null),
+      refreshOpenlux: () => Promise.resolve(null),
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(fetchedUrls.length, 1, "Surplus fetch must run even when SURPLUS_API_KEY is unset");
+    assert.equal(body.data.surplus.models, 1);
+    assert.equal(typeof body.data.surplus.updated_at_ms, "number");
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetSurplusModelsCacheForTest();
+  }
 });
 
 test("admin metadata refresh is registered as an operator POST route", () => {
