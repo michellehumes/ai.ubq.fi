@@ -251,6 +251,51 @@ test("the official DeepSeek ids are cataloged as their own provider category", a
   }
 });
 
+test("a duplicate id discovered by paid discovery still receives the official provider hint", async () => {
+  resetSurplusModelsCacheForTest();
+  resetOpenRouterModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = createFetchMock(() =>
+    Promise.resolve(
+      Response.json({
+        data: [
+          {
+            id: "deepseek-v4-flash",
+            object: "model",
+            created: 1_780_000_000,
+            owned_by: "surplus",
+            supported_endpoint_types: ["openai-response"],
+          },
+        ],
+      })
+    )
+  );
+  delete process.env.CEREBRAS_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "fixture-deepseek-key";
+  try {
+    const catalog = await buildModelCatalogSnapshot();
+    const row = catalog.models.find((model) => model.id === "deepseek-v4-flash");
+    assert.ok(row, "deepseek-v4-flash is present in the catalog");
+    assert.deepEqual(
+      row.providers.map((provider) => provider.id),
+      ["surplus", "deepseek"],
+      "both paid discovery and the official provider are attributed"
+    );
+    assert.equal(row.created, 1_780_000_000, "the timestamp from paid discovery is preserved");
+    assert.equal(row.context_window_tokens, 1_000_000, "the official provider context window is applied");
+    assert.equal(row.max_context_window_tokens, 1_000_000);
+    assert.equal(row.context_source, "provider_discovery");
+    assert.deepEqual(row.supported_reasoning_levels, ["none", "low", "high", "max"], "the official provider reasoning tiers are applied");
+    assert.equal(row.default_reasoning_effort, "high");
+    assert.equal(row.reasoning_source, "provider_discovery");
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetSurplusModelsCacheForTest();
+    resetOpenRouterModelsCacheForTest();
+    delete process.env.DEEPSEEK_API_KEY;
+  }
+});
+
 test("the gateway waterfall model is cataloged with one provider row per usable hop in cost-first order", async () => {
   delete process.env.DEEPSEEK_API_KEY;
   delete process.env.LITHOSAI_API_KEY;

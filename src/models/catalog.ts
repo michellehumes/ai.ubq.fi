@@ -234,6 +234,13 @@ const addPublicModelCatalogEntry = (
     if (existing.created === undefined && typeof created === "number" && Number.isSafeInteger(created) && created > 0) {
       existing.created = created;
     }
+    if (sources.provider && !existing.providers.some((candidate) => candidate.id === "codex")) {
+      const updated = publicModelCatalogEntry(id, provider, existing.created ?? null, sources);
+      models.set(id, {
+        ...updated,
+        providers: existing.providers,
+      });
+    }
     return;
   }
   models.set(id, publicModelCatalogEntry(id, provider, created, sources));
