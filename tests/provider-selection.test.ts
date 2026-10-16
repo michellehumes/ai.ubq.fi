@@ -694,3 +694,42 @@ test("the public catalog drops the gateway route while its identity is off", () 
     "with the identity on, the row narrows to the enabled providers like any other entry"
   );
 });
+
+test("an older in-flight selection read does not overwrite a newer saved value", async () => {
+  const kv = new SelectionKv();
+  kv.seedSelection(["codex"], 1_700_000_000_000);
+  let resolveSlowGet: ((entry: KvEntryMaybe<unknown>) => void) | null = null;
+  const originalGet = kv.get.bind(kv);
+  let interceptNextGet = true;
+  kv.get = <T>(key: KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<KvEntryMaybe<T>> => {
+    if (interceptNextGet && keyOf(key) === keyOf([...PROVIDER_SELECTION_KV_KEY])) {
+      interceptNextGet = false;
+      const snapshotPromise = originalGet<T>(key, options);
+      return new Promise<KvEntryMaybe<T>>((resolve) => {
+        resolveSlowGet = (entry) => resolve(entry as KvEntryMaybe<T>);
+        void snapshotPromise;
+      });
+    }
+    return originalGet<T>(key, options);
+  };
+
+  await withKv(kv, async () => {
+    const inflightRead = loadProviderSelectionCached(1_700_000_000_100);
+    const saved = await storeProviderSelection(kv as unknown as Kv, ["surplus"]);
+    assert.ok(saved);
+    assert.deepEqual(saved.provider_ids, ["surplus"]);
+
+    assert.ok(resolveSlowGet, "the initial read should still be in flight when the save commits");
+    resolveSlowGet({
+      key: [...PROVIDER_SELECTION_KV_KEY],
+      value: { provider_ids: ["codex"], updated_at_ms: 1_700_000_000_000 },
+      versionstamp: "00000000000000000001",
+    });
+
+    const inflightResult = await inflightRead;
+    assert.deepEqual(inflightResult?.provider_ids, ["surplus"], "the in-flight read resolves to the newer saved selection");
+    const cachedAfterRace = await loadProviderSelectionCached(saved.updated_at_ms + 1);
+    assert.deepEqual(cachedAfterRace?.provider_ids, ["surplus"], "the older read must not overwrite the newer saved cache entry");
+  });
+});
+
