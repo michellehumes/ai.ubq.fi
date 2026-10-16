@@ -83,7 +83,7 @@ const { CODEX_CATALOG_AUTH_GENERATION_KEY } = await import("../src/catalog/types
 const { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } = await import("../src/codex/index.ts");
 const { setKvForTest } = await import("../src/kv.ts");
 const { CODEX_MODELS_WHITELIST_KV_KEY } = await import("../src/models/codex-models-whitelist.ts");
-const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest } = await import("../src/models/openrouter-models.ts");
+const { fetchOpenRouterModels, resetOpenRouterModelsCacheForTest, setOpenRouterModelsFetchForTest } = await import("../src/models/openrouter-models.ts");
 const { PROVIDER_SELECTION_KV_KEY, resetProviderSelectionCacheForTest } = await import("../src/provider/selection.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime-config.ts");
 
@@ -355,3 +355,26 @@ test("codex catalog: served-byte ETags change when OpenRouter enriches an unchan
     }
   });
 });
+
+test("codex catalog: the paid-only catalog fallback warms OpenRouter enrichment", async () => {
+  await withFixture([], async () => {
+    setKvForTest(null);
+    resetOpenRouterModelsCacheForTest();
+    let warmFetchCalls = 0;
+    setOpenRouterModelsFetchForTest(
+      createFetchMock(() => {
+        warmFetchCalls += 1;
+        return Promise.resolve(Response.json({ data: [{ id: "vendor/warmed", context_length: 64_000 }] }));
+      })
+    );
+    try {
+      const response = await handleCodexCatalogModels(codexCatalogRequest(), "0.100.0");
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(warmFetchCalls, 1, "serving the metered catalog fallback starts an OpenRouter enrichment fetch");
+    } finally {
+      setOpenRouterModelsFetchForTest(null);
+    }
+  });
+});
+
